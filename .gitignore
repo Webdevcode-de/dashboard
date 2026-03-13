@@ -1,0 +1,6 @@
+settings.json
+venv
+venv2
+web_cache
+.qodo
+__pycache__
