@@ -1,5 +1,6 @@
 import sys
 import os
+import json
 from PyQt6.QtWidgets import QApplication
 from PyQt6.QtWebEngineWidgets import QWebEngineView
 from PyQt6.QtWebEngineCore import QWebEnginePage, QWebEngineProfile
@@ -19,30 +20,32 @@ CUSTOM_ERROR_HTML = """
 </html>
 """
 
-# Reload interval in milliseconds
-RELOAD_INTERVAL = 5000  # 5 seconds
+CONFIG_FILE = os.path.join(os.path.dirname(__file__), "config.json")
 
+def load_config():
+    if not os.path.exists(CONFIG_FILE):
+        raise FileNotFoundError(f"Config file not found: {CONFIG_FILE}")
+    with open(CONFIG_FILE, "r") as f:
+        return json.load(f)
 
 class CustomWebPage(QWebEnginePage):
-    def __init__(self, profile, parent=None, url=None):
+    def __init__(self, profile, parent=None, url=None, reload_interval=5000):
         super().__init__(profile, parent)
         self.url_to_load = url
+        self.reload_interval = reload_interval
         self.reload_timer = QTimer()
         self.reload_timer.setSingleShot(True)
         self.reload_timer.timeout.connect(self.try_reload)
 
     def certificateError(self, error):
-        # Accept all certificate errors
         error.acceptCertificate()
         return True
 
     def handle_load_finished(self, success):
         if not success:
-            # Show custom error page
             self.setHtml(CUSTOM_ERROR_HTML)
-            # Schedule a reload
             if self.url_to_load:
-                self.reload_timer.start(RELOAD_INTERVAL)
+                self.reload_timer.start(self.reload_interval)
 
     def try_reload(self):
         if self.url_to_load:
@@ -65,26 +68,32 @@ def main_app():
     )
 
     # -------- MAIN WINDOW --------
+    config = load_config()
+    main_conf = config.get("main_window", {})
+    main_url = main_conf.get("url")
+    main_user = main_conf.get("username", "")
+    main_pass = main_conf.get("password", "")
+    reload_interval = config.get("reload_interval_ms", 5000)
+
+    if main_user and main_pass:
+        protocol_sep = "://"
+        main_url = main_url.replace(protocol_sep, f"{protocol_sep}{main_user}:{main_pass}@", 1)
+
     main_view = QWebEngineView()
-    main_url = "https://user:pass1@testpages.eviltester.com/pages/auth/basic-auth/basic-auth-results.html"
-    main_page = CustomWebPage(profile, main_view, main_url)
+    main_page = CustomWebPage(profile, main_view, main_url, reload_interval)
     main_view.setPage(main_page)
     main_page.loadFinished.connect(main_page.handle_load_finished)
-
     main_view.setWindowFlag(Qt.WindowType.WindowStaysOnTopHint)
     main_view.showFullScreen()
-
-    main_view.setHtml("<html><body></body></html>")  # blank page first
+    main_view.setHtml("<html><body></body></html>")
     QTimer.singleShot(50, lambda: main_view.load(QUrl(main_url)))
 
     # -------- OVERLAY WINDOW --------
     overlay_view = QWebEngineView()
-    overlay_url = "http://localhost:8000"
-    overlay_page = CustomWebPage(profile, overlay_view, overlay_url)
+    overlay_page = CustomWebPage(profile, overlay_view, config.get("overlay_window", {}).get("url"), reload_interval)
     overlay_view.setPage(overlay_page)
     overlay_page.loadFinished.connect(overlay_page.handle_load_finished)
 
-    overlay_view.resize(610, 600)
     overlay_view.setWindowFlags(
         Qt.WindowType.FramelessWindowHint |
         Qt.WindowType.WindowStaysOnTopHint |
@@ -102,23 +111,29 @@ def main_app():
 
     overlay_view.loadFinished.connect(hide_scrollbars)
 
-    def position_overlay():
+    def apply_overlay_config():
+        cfg = load_config().get("overlay_window", {})
+        width = cfg.get("width", 610)
+        height = cfg.get("height", 600)
+        x_offset = cfg.get("x", -10)
+        y_offset = cfg.get("y", -100)
+        overlay_view.resize(width, height)
         screen = app.primaryScreen().availableGeometry()
-        x = screen.width() - overlay_view.width() - 10
-        y = screen.height() - overlay_view.height() + 100
+        x = screen.width() - width + x_offset
+        y = screen.height() - height + y_offset
         overlay_view.move(x, y)
 
-    position_overlay()
-    move_timer = QTimer()
-    move_timer.timeout.connect(position_overlay)
-    move_timer.start(2000)
+    # Timer to reload overlay config live
+    config_reload_interval = config.get("config_reload_interval_ms", 2000)
+    config_timer = QTimer()
+    config_timer.timeout.connect(apply_overlay_config)
+    config_timer.start(config_reload_interval)
 
-    overlay_view.setHtml("<html><body></body></html>")  # blank page first
-    QTimer.singleShot(50, lambda: overlay_view.load(QUrl(overlay_url)))
+    overlay_view.setHtml("<html><body></body></html>")
+    QTimer.singleShot(50, lambda: overlay_view.load(QUrl(config.get("overlay_window", {}).get("url"))))
     overlay_view.show()
 
     sys.exit(app.exec())
-
 
 if __name__ == "__main__":
     try:

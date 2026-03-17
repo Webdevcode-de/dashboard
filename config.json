@@ -1,0 +1,16 @@
+{
+    "main_window": {
+        "url": "https://authenticationtest.com/HTTPAuth/",
+        "username": "user",
+        "password": "pass"
+    },
+    "overlay_window": {
+        "url": "https://mvg.webdevcode.de",
+        "width": 640,
+        "height": 600,
+        "x": -10,
+        "y": 100
+    },
+    "reload_interval_ms": 5000,
+    "config_reload_interval_ms": 2000
+}

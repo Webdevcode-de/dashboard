@@ -4,3 +4,6 @@ venv2
 web_cache
 .qodo
 __pycache__
+dist
+build
+*.spec
