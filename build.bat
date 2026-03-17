@@ -9,14 +9,15 @@ pyinstaller --onefile --windowed --name screen --icon logo.ico --add-data "confi
 REM --- Build configurator.exe ---
 pyinstaller --onefile --windowed --name configurator --icon logo.ico --add-data "config.json;." configurator.py
 
-REM --- Build uninstall.exe ---
-pyinstaller --onefile --noconsole --name uninstall --icon logo.ico uninstall.py
+REM ---Build uninstall.exe---
+pyinstaller --onefile --windowed --name uninstall --icon logo.ico --add-data "dist;dist" uninstall.py
 
 REM --- Ensure dist folder exists for installer ---
 if not exist dist mkdir dist
 
 REM --- Build installer.exe ---
 pyinstaller --onefile --windowed --name installer --icon logo.ico --add-data "dist;dist" installer.py
+
 
 echo.
 echo All EXEs built successfully!

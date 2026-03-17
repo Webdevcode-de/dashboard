@@ -3,20 +3,23 @@ import os
 import shutil
 import json
 import ctypes
-from PyQt6.QtWidgets import (
-    QApplication, QWidget, QVBoxLayout, QLabel, QLineEdit,
-    QSpinBox, QPushButton, QCheckBox, QMessageBox
-)
-import winreg
+from PyQt6.QtWidgets import QApplication, QWidget, QVBoxLayout, QCheckBox, QPushButton, QMessageBox
 from win32com.client import Dispatch
+import winreg
 
-# ------------------------ CONFIG ------------------------
+# Paths
 DIST_FOLDER = os.path.join(os.path.dirname(__file__), "dist")
 PROGRAM_FILES = os.environ.get("ProgramFiles", "C:\\Program Files")
 INSTALL_FOLDER = os.path.join(PROGRAM_FILES, "ScreenOverlayApp")
-CONFIG_FILE = os.path.join(INSTALL_FOLDER, "config.json")
-APP_NAME = "Screen Overlay App"
+USER_CONFIG_FOLDER = os.path.join(os.path.expanduser("~"), ".screenapp")
 
+# App names
+APP_NAME_MAIN = "Screen Overlay App"
+APP_NAME_CONFIG = "Overlay Config"
+
+EXE_FILES = ["screen.exe", "uninstall.exe", "configurator.exe"]
+
+# Default config
 CONFIG_DEFAULT = {
     "main_window": {"url": "https://example.com", "username": "", "password": ""},
     "overlay_window": {"url": "http://localhost:8000", "width": 610, "height": 600, "x": -10, "y": -100},
@@ -24,42 +27,75 @@ CONFIG_DEFAULT = {
     "config_reload_interval_ms": 2000
 }
 
-EXE_FILES = ["configurator.exe", "screen.exe", "uninstall.exe"]
-
-# ------------------------ ADMIN CHECK ------------------------
 def is_admin():
     try:
         return ctypes.windll.shell32.IsUserAnAdmin()
     except:
         return False
 
-# ------------------------ INSTALL FUNCTION ------------------------
-def install_app(run_at_startup, config, dry_run=False):
+def register_uninstall_entries(install_config_app):
+    """Add registry entries for Installed Apps"""
+    try:
+        # Main app
+        key_path = rf"SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\{APP_NAME_MAIN}"
+        key = winreg.CreateKey(winreg.HKEY_LOCAL_MACHINE, key_path)
+        winreg.SetValueEx(key, "DisplayName", 0, winreg.REG_SZ, APP_NAME_MAIN)
+        winreg.SetValueEx(key, "UninstallString", 0, winreg.REG_SZ, os.path.join(INSTALL_FOLDER, "uninstall.exe"))
+        winreg.SetValueEx(key, "DisplayIcon", 0, winreg.REG_SZ, os.path.join(INSTALL_FOLDER, "screen.exe"))
+        winreg.SetValueEx(key, "Publisher", 0, winreg.REG_SZ, "My Company")
+        winreg.SetValueEx(key, "DisplayVersion", 0, winreg.REG_SZ, "1.0")
+        winreg.CloseKey(key)
+
+        if install_config_app:
+            # Config app entry
+            key_path = rf"SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\{APP_NAME_CONFIG}"
+            key = winreg.CreateKey(winreg.HKEY_LOCAL_MACHINE, key_path)
+            winreg.SetValueEx(key, "DisplayName", 0, winreg.REG_SZ, APP_NAME_CONFIG)
+            winreg.SetValueEx(key, "UninstallString", 0, winreg.REG_SZ, os.path.join(INSTALL_FOLDER, "uninstall.exe"))
+            winreg.SetValueEx(key, "DisplayIcon", 0, winreg.REG_SZ, os.path.join(INSTALL_FOLDER, "configurator.exe"))
+            winreg.SetValueEx(key, "Publisher", 0, winreg.REG_SZ, "My Company")
+            winreg.SetValueEx(key, "DisplayVersion", 0, winreg.REG_SZ, "1.0")
+            winreg.CloseKey(key)
+    except Exception as e:
+        print("Registry entry failed:", e)
+
+def create_start_menu_shortcut(app_name, exe_name):
+    """Create Start Menu shortcut so Windows Search can find it"""
+    try:
+        start_menu = os.path.join(os.environ['APPDATA'], 'Microsoft', 'Windows', 'Start Menu', 'Programs')
+        shortcut_path = os.path.join(start_menu, f"{app_name}.lnk")
+        target = os.path.join(INSTALL_FOLDER, exe_name)
+        shell = Dispatch('WScript.Shell')
+        shortcut = shell.CreateShortCut(shortcut_path)
+        shortcut.Targetpath = target
+        shortcut.WorkingDirectory = INSTALL_FOLDER
+        shortcut.save()
+    except Exception as e:
+        print(f"Failed to create Start Menu shortcut for {app_name}:", e)
+
+def install_app(run_at_startup, install_config_app, config, dry_run=False):
     if dry_run:
-        print("Dry run mode: nothing will be installed.")
-        print(f"Would install to {INSTALL_FOLDER}")
-        print(f"Config: {json.dumps(config, indent=2)}")
+        print("Dry run mode")
         return True
 
+    # Copy EXEs
     os.makedirs(INSTALL_FOLDER, exist_ok=True)
+    shutil.copy2(os.path.join(DIST_FOLDER, "screen.exe"), os.path.join(INSTALL_FOLDER, "screen.exe"))
+    shutil.copy2(os.path.join(DIST_FOLDER, "uninstall.exe"), os.path.join(INSTALL_FOLDER, "uninstall.exe"))
+    if install_config_app:
+        shutil.copy2(os.path.join(DIST_FOLDER, "configurator.exe"), os.path.join(INSTALL_FOLDER, "configurator.exe"))
 
-    # Copy executables
-    for exe in EXE_FILES:
-        src = os.path.join(DIST_FOLDER, exe)
-        dst = os.path.join(INSTALL_FOLDER, exe)
-        if not os.path.exists(src):
-            raise FileNotFoundError(f"{src} not found!")
-        shutil.copy2(src, dst)
-
-    # Save config
-    with open(CONFIG_FILE, "w") as f:
+    # Save user config
+    os.makedirs(USER_CONFIG_FOLDER, exist_ok=True)
+    with open(os.path.join(USER_CONFIG_FOLDER, "config.json"), "w") as f:
         json.dump(config, f, indent=4)
 
-    # Create startup shortcut if needed
+    # Startup shortcut
     if run_at_startup:
         try:
             startup = os.path.join(os.environ['APPDATA'], 'Microsoft', 'Windows', 'Start Menu', 'Programs', 'Startup')
-            shortcut_path = os.path.join(startup, f"{APP_NAME}.lnk")
+            os.makedirs(startup, exist_ok=True)
+            shortcut_path = os.path.join(startup, f"{APP_NAME_MAIN}.lnk")
             target = os.path.join(INSTALL_FOLDER, "screen.exe")
             shell = Dispatch('WScript.Shell')
             shortcut = shell.CreateShortCut(shortcut_path)
@@ -69,55 +105,28 @@ def install_app(run_at_startup, config, dry_run=False):
         except Exception as e:
             print("Failed to create startup shortcut:", e)
 
-    # Register in Windows installed programs
-    register_installed_program()
+    # Start Menu shortcuts for search
+    create_start_menu_shortcut(APP_NAME_MAIN, "screen.exe")
+    if install_config_app:
+        create_start_menu_shortcut(APP_NAME_CONFIG, "configurator.exe")
+
+    # Registry entries for Installed Apps
+    register_uninstall_entries(install_config_app)
     return True
 
-# ------------------------ REGISTER IN WIN APPS ------------------------
-def register_installed_program():
-    try:
-        key_path = r"SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\{}".format(APP_NAME)
-        key = winreg.CreateKey(winreg.HKEY_LOCAL_MACHINE, key_path)
-        winreg.SetValueEx(key, "DisplayName", 0, winreg.REG_SZ, APP_NAME)
-        winreg.SetValueEx(key, "UninstallString", 0, winreg.REG_SZ, os.path.join(INSTALL_FOLDER, "uninstall.exe"))
-        winreg.SetValueEx(key, "DisplayIcon", 0, winreg.REG_SZ, os.path.join(INSTALL_FOLDER, "screen.exe"))
-        winreg.SetValueEx(key, "Publisher", 0, winreg.REG_SZ, "My Company")
-        winreg.SetValueEx(key, "DisplayVersion", 0, winreg.REG_SZ, "1.0")
-        winreg.CloseKey(key)
-    except Exception as e:
-        print("Failed to register installed program:", e)
+# Installer GUI
+from PyQt6.QtWidgets import QApplication, QWidget, QVBoxLayout, QCheckBox, QPushButton, QMessageBox
 
-# ------------------------ GUI ------------------------
 class Installer(QWidget):
     def __init__(self):
         super().__init__()
-        self.setWindowTitle(f"{APP_NAME} Installer")
+        self.setWindowTitle("Screen Overlay Installer")
         self.init_ui()
 
     def init_ui(self):
         layout = QVBoxLayout()
-
-        layout.addWidget(QLabel("<b>Main Window URL & Auth</b>"))
-        self.main_url = QLineEdit(CONFIG_DEFAULT["main_window"]["url"])
-        self.main_user = QLineEdit(CONFIG_DEFAULT["main_window"]["username"])
-        self.main_pass = QLineEdit(CONFIG_DEFAULT["main_window"]["password"])
-        self.main_pass.setEchoMode(QLineEdit.EchoMode.Password)
-        layout.addWidget(QLabel("URL:")); layout.addWidget(self.main_url)
-        layout.addWidget(QLabel("Username:")); layout.addWidget(self.main_user)
-        layout.addWidget(QLabel("Password:")); layout.addWidget(self.main_pass)
-
-        layout.addWidget(QLabel("<b>Overlay Settings</b>"))
-        self.overlay_url = QLineEdit(CONFIG_DEFAULT["overlay_window"]["url"])
-        self.width = QSpinBox(); self.width.setRange(100, 2000); self.width.setValue(CONFIG_DEFAULT["overlay_window"]["width"])
-        self.height = QSpinBox(); self.height.setRange(100, 2000); self.height.setValue(CONFIG_DEFAULT["overlay_window"]["height"])
-        self.x = QSpinBox(); self.x.setRange(-2000, 2000); self.x.setValue(CONFIG_DEFAULT["overlay_window"]["x"])
-        self.y = QSpinBox(); self.y.setRange(-2000, 2000); self.y.setValue(CONFIG_DEFAULT["overlay_window"]["y"])
-
-        layout.addWidget(QLabel("Overlay URL:")); layout.addWidget(self.overlay_url)
-        layout.addWidget(QLabel("Width:")); layout.addWidget(self.width)
-        layout.addWidget(QLabel("Height:")); layout.addWidget(self.height)
-        layout.addWidget(QLabel("X offset:")); layout.addWidget(self.x)
-        layout.addWidget(QLabel("Y offset:")); layout.addWidget(self.y)
+        self.install_config = QCheckBox("Also install Overlay Config (Configurator)")
+        layout.addWidget(self.install_config)
 
         self.run_startup = QCheckBox("Run screen.exe at startup")
         layout.addWidget(self.run_startup)
@@ -132,26 +141,24 @@ class Installer(QWidget):
         self.setLayout(layout)
 
     def run_install(self):
-        config = {
-            "main_window": {"url": self.main_url.text(), "username": self.main_user.text(), "password": self.main_pass.text()},
-            "overlay_window": {"url": self.overlay_url.text(), "width": self.width.value(), "height": self.height.value(),
-                               "x": self.x.value(), "y": self.y.value()},
-            "reload_interval_ms": CONFIG_DEFAULT["reload_interval_ms"],
-            "config_reload_interval_ms": CONFIG_DEFAULT["config_reload_interval_ms"]
-        }
+        config = CONFIG_DEFAULT
         try:
-            install_app(self.run_startup.isChecked(), config, self.dry_run.isChecked())
+            install_app(
+                self.run_startup.isChecked(),
+                self.install_config.isChecked(),
+                config,
+                self.dry_run.isChecked()
+            )
             QMessageBox.information(self, "Success",
-                f"Installed to {INSTALL_FOLDER}" if not self.dry_run.isChecked() else "Dry run complete")
+                                    "Installed successfully!" if not self.dry_run.isChecked() else "Dry run complete")
             if not self.dry_run.isChecked():
                 self.close()
         except Exception as e:
             QMessageBox.critical(self, "Error", str(e))
 
-# ------------------------ RUN ------------------------
 if __name__ == "__main__":
     if not is_admin():
-        ctypes.windll.shell32.ShellExecuteW(None, "runas", sys.executable, __file__, None, 1)
+        ctypes.windll.shell32.ShellExecuteW(None, "runas", sys.executable, __file__, None, 0)
         sys.exit(0)
 
     app = QApplication(sys.argv)
